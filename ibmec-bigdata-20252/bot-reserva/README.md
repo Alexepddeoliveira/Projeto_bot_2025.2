@@ -1,6 +1,7 @@
 # bot-reserva
 
-Bot de reserva da turma de big data 2025.2
+Bot de reserva de hotel. big data 2025.2
+Alunos: Alex oliveira e Eric Leter
 
 This bot has been created using [Bot Framework](https://dev.botframework.com), it shows how to create a simple bot that accepts input from the user and echoes it back.
 
