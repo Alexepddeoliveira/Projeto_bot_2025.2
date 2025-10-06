@@ -3,6 +3,7 @@ from botbuilder.core import MessageFactory, UserState
 from botbuilder.dialogs import ComponentDialog, WaterfallDialog, WaterfallStepContext
 from botbuilder.dialogs.prompts import TextPrompt, PromptOptions
 
+from helpers.databse_helper import salvar_nova_reserva
 
 class novasReservasDialogo(ComponentDialog):
     def __init__(self, user_state: UserState):
@@ -93,28 +94,43 @@ class novasReservasDialogo(ComponentDialog):
         )
         return await step_context.next(None)
 
+
     async def resumo_step(self, step_context: WaterfallStepContext):
+        # Coleta os dados (sem gerar o ID aqui)
         destino = step_context.values["destino"]
         hospedes = step_context.values["hospedes"]
         chegada = step_context.values["chegada"]
         saida = step_context.values["saida"]
 
-        # Cria ID único para a reserva
-        reserva_id = str(uuid.uuid4())[:8]  # só os 8 primeiros caracteres para ficar curto
-        step_context.values["reserva_id"] = reserva_id
+        # Monta o dicionário sem o ID
+        reserva_data = {
+            "destino": destino,
+            "hospedes": hospedes,
+            "chegada": chegada,
+            "saida": saida
+        }
 
-        resumo = (
-            f"Resumo da sua reserva:\n"
-            f"- Número da reserva: **{reserva_id}**\n"
-            f"- Destino: **{destino}**\n"
-            f"- Hóspedes: **{hospedes}**\n"
-            f"- Chegada: **{chegada}**\n"
-            f"- Saída: **{saida}**"
-        )
+        # ---- LÓGICA DO BANCO DE DADOS ----
+        print(f"DEBUG: Enviando dados para o banco: {reserva_data}")
+        novo_id_do_banco = salvar_nova_reserva(reserva_data)
 
-        await step_context.context.send_activity(MessageFactory.text(resumo))
-        await step_context.context.send_activity(
-            MessageFactory.text("Sua reserva foi registrada com sucesso!")
-        )
+        if novo_id_do_banco:
+            # Mostra o resumo para o usuário COM O ID REAL do banco
+            resumo = (
+                f"Resumo da sua reserva:\n"
+                f"- Número da reserva: **{novo_id_do_banco}**\n" # <-- Usando o ID retornado
+                f"- Destino: **{destino}**\n"
+                f"- Hóspedes: **{hospedes}**\n"
+                f"- Chegada: **{chegada}**\n"
+                f"- Saída: **{saida}**"
+            )
+            await step_context.context.send_activity(MessageFactory.text(resumo))
+            await step_context.context.send_activity(
+                MessageFactory.text("Sua reserva foi registrada com sucesso no nosso sistema!")
+            )
+        else:
+            await step_context.context.send_activity(
+                MessageFactory.text("Desculpe, tivemos um problema ao salvar sua reserva. Por favor, tente novamente mais tarde.")
+            )
 
         return await step_context.end_dialog()

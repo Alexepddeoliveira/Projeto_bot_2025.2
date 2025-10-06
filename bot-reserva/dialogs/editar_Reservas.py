@@ -3,10 +3,11 @@ from botbuilder.dialogs import ComponentDialog, WaterfallDialog, WaterfallStepCo
 from botbuilder.dialogs.prompts import TextPrompt, PromptOptions, ChoicePrompt
 from botbuilder.dialogs.choices import Choice, ListStyle
 
+from helpers.databse_helper import buscar_reserva_por_id, atualizar_reserva
 
-class editarReservasDialogo(ComponentDialog):
+class EditarReservasDialogo(ComponentDialog):
     def __init__(self, user_state: UserState):
-        super(editarReservasDialogo, self).__init__("editarReservasDialogo")
+        super(EditarReservasDialogo, self).__init__(__class__.__name__)
 
         # Guarda na memória onde o usuário parou no diálogo
         self.user_state = user_state
@@ -17,7 +18,7 @@ class editarReservasDialogo(ComponentDialog):
 
         self.add_dialog(
             WaterfallDialog(
-                "editarReservasDialogo",
+                "WaterfallDialog",
                 [
                     self.prompt_identificador_step,
                     self.process_identificador_step,
@@ -32,11 +33,10 @@ class editarReservasDialogo(ComponentDialog):
             )
         )
 
-        self.initial_dialog_id = "editarReservasDialogo"
+        self.initial_dialog_id = "WaterfallDialog"
 
-    # identificador
+    # Pede o ID da reserva
     async def prompt_identificador_step(self, step_context: WaterfallStepContext):
-        # Se o diálogo foi reiniciado com estado (options), pulamos a coleta do identificador
         if getattr(step_context, "options", None):
             opts = step_context.options or {}
             if "reserva_atual" in opts and "reserva_editada" in opts and "identificador" in opts:
@@ -52,38 +52,38 @@ class editarReservasDialogo(ComponentDialog):
             TextPrompt.__name__,
             PromptOptions(
                 prompt=MessageFactory.text(
-                    "Por favor, digite o **número da reserva** (ou o **CPF** utilizado na reserva):"
+                    "Por favor, digite o **número (ID) da reserva** que deseja editar:"
                 )
             ),
         )
 
-    # Carrega dados (simulação) e inicializa estado
+    # Busca a reserva no banco de dados
     async def process_identificador_step(self, step_context: WaterfallStepContext):
-        # Se veio do reinício com options, já temos tudo
         if step_context.result == "skip-identificador":
             return await step_context.next(None)
 
-        identificador = (step_context.result or "").strip()
+        identificador_str = (step_context.result or "").strip()
+        
+        try:
+            identificador = int(identificador_str)
+        except ValueError:
+            await step_context.context.send_activity(MessageFactory.text(f"O ID '{identificador_str}' não é um número válido."))
+            return await step_context.end_dialog()
+
+        print(f"DEBUG: Buscando reserva com ID {identificador}...")
+        reserva_atual = buscar_reserva_por_id(identificador)
+
+        if not reserva_atual:
+            await step_context.context.send_activity(MessageFactory.text(f"Não encontrei nenhuma reserva com o ID **{identificador}**."))
+            return await step_context.end_dialog()
+
+        step_context.values["reserva_atual"] = reserva_atual
+        step_context.values["reserva_editada"] = dict(reserva_atual)
         step_context.values["identificador"] = identificador
 
-        # TODO: Buscar no backend pelo identificador. SIMULAÇÃO de dados atuais:
-        reserva_atual = {
-            "reserva_id": identificador if identificador else "RSV-2025-ABC12345",
-            "destino": "Fortaleza/CE",
-            "hospedes": "2",
-            "chegada": "10/10/2025",
-            "saida": "15/10/2025",
-        }
-        step_context.values["reserva_atual"] = reserva_atual
-        step_context.values["reserva_editada"] = dict(reserva_atual)  # começamos iguais
-
+        await step_context.context.send_activity(MessageFactory.text(f"✅ Reserva **{identificador}** encontrada."))
         await step_context.context.send_activity(
-            MessageFactory.text(f"✅ Identificador recebido: **{identificador or reserva_atual['reserva_id']}**.")
-        )
-        await step_context.context.send_activity(
-            MessageFactory.text(
-                "Encontrei sua reserva. Escolha abaixo **o que deseja alterar** (ou **Finalizar**):"
-            )
+            MessageFactory.text("Escolha abaixo **o que deseja alterar** (ou **Finalizar**):")
         )
         await step_context.context.send_activity(
             MessageFactory.text(
@@ -97,7 +97,7 @@ class editarReservasDialogo(ComponentDialog):
         )
         return await step_context.next(None)
 
-    #botões (Suggested Actions)
+    # Mostra o menu de opções para edição
     async def prompt_menu_step(self, step_context: WaterfallStepContext):
         return await step_context.prompt(
             ChoicePrompt.__name__,
@@ -110,20 +110,18 @@ class editarReservasDialogo(ComponentDialog):
                     Choice("Saída"),
                     Choice("Finalizar"),
                 ],
-                style=ListStyle.suggested_action,  # botões acima do composer
+                style=ListStyle.suggested_action,
             ),
         )
 
-    # Roteia a escolha do menu
+    # Processa a escolha do usuário
     async def route_choice_step(self, step_context: WaterfallStepContext):
         escolha = step_context.result.value if step_context.result else ""
         step_context.values["escolha_menu"] = escolha
 
         if escolha == "Finalizar":
-            # Pula para o resumo
             return await step_context.next("finalizar")
 
-        # define qual campo editar
         campos_map = {
             "Destino": "destino",
             "Hóspedes": "hospedes",
@@ -133,7 +131,7 @@ class editarReservasDialogo(ComponentDialog):
         step_context.values["campo_em_edicao"] = campos_map.get(escolha)
         return await step_context.next(None)
 
-    # Prompt do campo escolhido
+    # Pede o novo valor para o campo escolhido
     async def prompt_edit_field_step(self, step_context: WaterfallStepContext):
         if step_context.result == "finalizar":
             return await step_context.next("finalizar")
@@ -157,7 +155,7 @@ class editarReservasDialogo(ComponentDialog):
             ),
         )
 
-    # Processa a edição do campo
+    # Processa o novo valor e atualiza o estado temporário
     async def process_edit_field_step(self, step_context: WaterfallStepContext):
         if step_context.result == "finalizar":
             return await step_context.next("finalizar")
@@ -175,7 +173,7 @@ class editarReservasDialogo(ComponentDialog):
 
         return await step_context.next(None)
 
-    # Pergunta se quer fazer mais alterações
+    # Pergunta se o usuário quer continuar editando
     async def prompt_continue_step(self, step_context: WaterfallStepContext):
         if step_context.result == "finalizar":
             return await step_context.next("finalizar")
@@ -189,7 +187,7 @@ class editarReservasDialogo(ComponentDialog):
             ),
         )
 
-    # Reinicia
+    # Roteia a decisão de continuar ou finalizar
     async def route_continue_step(self, step_context: WaterfallStepContext):
         if step_context.result == "finalizar":
             return await step_context.next("finalizar")
@@ -211,7 +209,7 @@ class editarReservasDialogo(ComponentDialog):
         else:
             return await step_context.next("finalizar")
 
-    # Resumo final
+    # Mostra o resumo final e salva as alterações no banco
     async def resumo_step(self, step_context: WaterfallStepContext):
         r = step_context.values["reserva_editada"]
         resumo = (
@@ -224,9 +222,17 @@ class editarReservasDialogo(ComponentDialog):
         )
         await step_context.context.send_activity(MessageFactory.text(resumo))
 
-        # TODO: Persistir alterações no backend
-        await step_context.context.send_activity(
-            MessageFactory.text("Alterações registradas com sucesso!")
-        )
+        # Lógica de atualização real no banco de dados
+        print(f"DEBUG: Atualizando reserva ID {r['reserva_id']} com os dados: {r}")
+        sucesso = atualizar_reserva(r['reserva_id'], r)
+
+        if sucesso:
+            await step_context.context.send_activity(
+                MessageFactory.text("Alterações registradas com sucesso!")
+            )
+        else:
+            await step_context.context.send_activity(
+                MessageFactory.text("Desculpe, ocorreu um erro ao salvar suas alterações.")
+            )
 
         return await step_context.end_dialog()

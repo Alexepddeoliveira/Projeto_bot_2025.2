@@ -12,4 +12,4 @@ class DefaultConfig:
     APP_PASSWORD = os.environ.get("MicrosoftAppPassword", "")
 
   # ADICIONE SUA STRING DE CONEXÃO AQUI
-    DATABASE_URL = "123456Bigdata@db.ifnoknojyagutmxuqwmu.supabase.co:5432/postgres"
+    DATABASE_URL = "postgresql://postgres:123456Bigdata@db.ifnoknojyagutmxuqwmu.supabase.co:5432/postgres"
