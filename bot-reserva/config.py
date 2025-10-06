@@ -10,3 +10,6 @@ class DefaultConfig:
     PORT = 3978
     APP_ID = os.environ.get("MicrosoftAppId", "")
     APP_PASSWORD = os.environ.get("MicrosoftAppPassword", "")
+
+  # ADICIONE SUA STRING DE CONEXÃO AQUI
+    DATABASE_URL = "123456Bigdata@db.ifnoknojyagutmxuqwmu.supabase.co:5432/postgres"
