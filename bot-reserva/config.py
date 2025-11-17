@@ -11,5 +11,20 @@ class DefaultConfig:
     APP_ID = os.environ.get("MicrosoftAppId", "")
     APP_PASSWORD = os.environ.get("MicrosoftAppPassword", "")
 
-  # ADICIONE SUA STRING DE CONEXÃO AQUI
-    DATABASE_URL = "postgresql://postgres:123456Bigdata@db.ifnoknojyagutmxuqwmu.supabase.co:5432/postgres"
+    # =========================
+    # CONFIG DO AZURE COSMOS DB
+    # =========================
+    # COSMOS_ENDPOINT: endereço da conta Cosmos (a "rua" do seu banco)
+    # COSMOS_KEY: chave de acesso (a "chave da casa")
+    # COSMOS_DATABASE: nome do database criado no Data Explorer
+    # COSMOS_CONTAINER: nome do container onde ficam as reservas
+    COSMOS_ENDPOINT = os.environ.get(
+        "COSMOS_ENDPOINT",
+        "https://chatbotdbga.documents.azure.com:443/",
+    )
+    COSMOS_KEY = os.environ.get(
+        "COSMOS_KEY",
+        "daHWXnyAkkz2t8xfICeJQ9fx6hmYoDSOtmDuZANhoWf34EzrRGKnriBg8UZyWzmxJimlMeYHBRJxACDbjD6oPg==",
+    )
+    COSMOS_DATABASE = os.environ.get("COSMOS_DATABASE", "reservas-db")
+    COSMOS_CONTAINER = os.environ.get("COSMOS_CONTAINER", "reservas")

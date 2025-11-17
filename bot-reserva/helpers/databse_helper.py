@@ -1,162 +1,150 @@
-import psycopg2
+from azure.cosmos import CosmosClient, PartitionKey, exceptions
 from config import DefaultConfig
 
-def get_db_connection():
-    """Cria e retorna uma nova conexão com o banco de dados."""
+
+# ===============================
+# CONEXÃO COM O COSMOS DB (NoSQL)
+# ===============================
+# Esse módulo faz a ponte entre o bot e o banco.
+# Agora ele fala com Azure Cosmos DB for NoSQL em vez de PostgreSQL.
+
+# Cria o cliente principal do Cosmos
+client = CosmosClient(
+    DefaultConfig.COSMOS_ENDPOINT,
+    credential=DefaultConfig.COSMOS_KEY,
+)
+
+# Garante que o database e o container existem
+database = client.create_database_if_not_exists(id=DefaultConfig.COSMOS_DATABASE)
+container = database.create_container_if_not_exists(
+    id=DefaultConfig.COSMOS_CONTAINER,
+    partition_key=PartitionKey(path="/id"),
+    offer_throughput=400,  # ok pra demo/trabalho
+)
+
+
+def _get_next_reserva_id():
+    """
+    Descobre qual será o próximo número de reserva.
+    Olha todas as reservas e pega o maior reserva_id, depois soma 1.
+    Para trabalho de faculdade isso é suficiente.
+    """
+    query = "SELECT VALUE MAX(c.reserva_id) FROM c"
+    items = list(container.query_items(query=query, enable_cross_partition_query=True))
+    current_max = items[0] if items and items[0] is not None else 0
     try:
-        conn = psycopg2.connect(DefaultConfig.DATABASE_URL)
-        return conn
-    except Exception as e:
-        print(f"Erro ao conectar ao banco de dados: {e}")
-        return None
+        current_max = int(current_max)
+    except (TypeError, ValueError):
+        current_max = 0
+    return current_max + 1
+
 
 def salvar_nova_reserva(reserva_data: dict):
     """
-    Salva uma nova reserva no banco de dados.
-    Não envia o ID, espera que o banco o gere.
-    Retorna o ID da nova reserva em caso de sucesso.
+    Salva uma nova reserva no Cosmos DB.
+    Mantém a mesma ideia do código antigo:
+    - recebe um dict com destino, hospedes, chegada, saida
+    - retorna o ID da nova reserva em caso de sucesso
     """
-    # SQL modificado: removemos a coluna 'reserva_id' do insert.
-    # Adicionamos "RETURNING reserva_id" para pegar o ID que o banco criou.
-    sql = """
-        INSERT INTO reservas (destino, hospedes, chegada, saida) 
-        VALUES (%s, %s, %s, %s)
-        RETURNING reserva_id; 
-    """
-    
-    conn = None
     try:
-        conn = get_db_connection()
-        if not conn:
-            return None # Falha na conexão
+        novo_id = _get_next_reserva_id()
 
-        cur = conn.cursor()
-        
-        # Executa o comando SQL, sem o ID
-        cur.execute(sql, (
-            reserva_data['destino'],
-            reserva_data['hospedes'],
-            reserva_data['chegada'],
-            reserva_data['saida']
-        ))
-        
-        # Pega o ID que o banco retornou
-        novo_id = cur.fetchone()[0]
-        
-        conn.commit()
-        
-        print(f"DEBUG: Reserva salva com sucesso! Novo ID do banco: {novo_id}")
-        cur.close()
-        return novo_id # Retorna o ID
+        item = {
+            "id": str(novo_id),          # ID obrigatório do Cosmos (string)
+            "reserva_id": novo_id,      # ID numérico usado pelo resto do código
+            "destino": reserva_data["destino"],
+            "hospedes": reserva_data["hospedes"],
+            "chegada": reserva_data["chegada"],
+            "saida": reserva_data["saida"],
+        }
+
+        container.create_item(body=item)
+        print(f"Reserva salva no Cosmos com ID {novo_id}")
+        return novo_id
 
     except Exception as e:
-        print(f"!!!!!!!!!!!!!!! ERRO AO SALVAR RESERVA NO BANCO !!!!!!!!!!!!!!!")
-        print(e)
-        if conn:
-            conn.rollback()
-        return None # Retorna falha
-
-    finally:
-        if conn is not None:
-            conn.close()
-            
-def buscar_reserva_por_id(reserva_id: int):
-    """Busca uma reserva no banco de dados pelo seu ID."""
-    sql = "SELECT * FROM reservas WHERE reserva_id = %s;"
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return None # Falha na conexão
-
-        cur = conn.cursor()
-        cur.execute(sql, (reserva_id,))
-        reserva = cur.fetchone()
-        cur.close()
-        
-        if reserva:
-            reserva_dict = {
-                'reserva_id': reserva[0],
-                'destino': reserva[1],
-                'hospedes': reserva[2],
-                'chegada': reserva[3],
-                'saida': reserva[4]
-            }
-            return reserva_dict
-        else:
-            return None
-
-    except Exception as e:
-        print(f"Erro ao buscar reserva no banco de dados: {e}")
+        print("Erro ao salvar reserva no Cosmos:", e)
         return None
 
-    finally:
-        if conn is not None:
-            conn.close()
-            
-def atualizar_reserva(reserva_id: int, reserva_data: dict):
-    """Atualiza uma reserva existente no banco de dados."""
-    sql = """
-        UPDATE reservas 
-        SET destino = %s, hospedes = %s, chegada = %s, saida = %s 
-        WHERE reserva_id = %s;
+
+def buscar_reserva_por_id(reserva_id: int):
     """
-    
-    conn = None
+    Busca uma reserva pelo número (reserva_id).
+    Retorna um dicionário com os campos esperados ou None se não achar.
+    """
     try:
-        conn = get_db_connection()
-        if not conn:
-            return False # Falha na conexão
+        query = "SELECT * FROM c WHERE c.reserva_id = @id"
+        params = [{"name": "@id", "value": int(reserva_id)}]
 
-        cur = conn.cursor()
-        cur.execute(sql, (
-            reserva_data['destino'],
-            reserva_data['hospedes'],
-            reserva_data['chegada'],
-            reserva_data['saida'],
-            reserva_id
-        ))
-        
-        conn.commit()
-        cur.close()
-        
-        return cur.rowcount > 0 # Retorna True se alguma linha foi atualizada
+        items = list(
+            container.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True,
+            )
+        )
+
+        if not items:
+            return None
+
+        item = items[0]
+
+        return {
+            "reserva_id": item.get("reserva_id"),
+            "destino": item.get("destino"),
+            "hospedes": item.get("hospedes"),
+            "chegada": item.get("chegada"),
+            "saida": item.get("saida"),
+        }
 
     except Exception as e:
-        print(f"Erro ao atualizar reserva no banco de dados: {e}")
-        if conn:
-            conn.rollback()
+        print("Erro ao buscar reserva no Cosmos:", e)
+        return None
+
+
+def atualizar_reserva(reserva_id: int, reserva_data: dict):
+    """
+    Atualiza uma reserva existente.
+    Retorna True se conseguiu atualizar, False caso contrário.
+    """
+    try:
+        doc_id = str(reserva_id)
+        pk = doc_id
+
+        try:
+            item = container.read_item(item=doc_id, partition_key=pk)
+        except exceptions.CosmosResourceNotFoundError:
+            return False
+
+        item["destino"] = reserva_data["destino"]
+        item["hospedes"] = reserva_data["hospedes"]
+        item["chegada"] = reserva_data["chegada"]
+        item["saida"] = reserva_data["saida"]
+
+        container.replace_item(item=item, body=item)
+        return True
+
+    except Exception as e:
+        print("Erro ao atualizar reserva no Cosmos:", e)
         return False
 
-    finally:
-        if conn is not None:
-            conn.close()
-            
+
 def deletar_reserva(reserva_id: int):
-    """Deleta uma reserva do banco de dados pelo seu ID."""
-    sql = "DELETE FROM reservas WHERE reserva_id = %s;"
-    
-    conn = None
+    """
+    Deleta uma reserva pelo ID.
+    Retorna True se conseguiu deletar, False caso contrário.
+    """
     try:
-        conn = get_db_connection()
-        if not conn:
-            return False # Falha na conexão
+        doc_id = str(reserva_id)
+        pk = doc_id
 
-        cur = conn.cursor()
-        cur.execute(sql, (reserva_id,))
-        
-        conn.commit()
-        cur.close()
-        
-        return cur.rowcount > 0 # Retorna True se alguma linha foi deletada
+        container.delete_item(item=doc_id, partition_key=pk)
+        return True
 
-    except Exception as e:
-        print(f"Erro ao deletar reserva no banco de dados: {e}")
-        if conn:
-            conn.rollback()
+    except exceptions.CosmosResourceNotFoundError:
+        # Não achou a reserva
         return False
 
-    finally:
-        if conn is not None:
-            conn.close()
+    except Exception as e:
+        print("Erro ao deletar reserva no Cosmos:", e)
+        return False
