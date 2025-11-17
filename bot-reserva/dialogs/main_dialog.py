@@ -16,7 +16,7 @@ class MainDialog(ComponentDialog):
         self.user_state = user_state
         self.add_dialog(ChoicePrompt(ChoicePrompt.__name__))
 
-        # Diálogos de CRUD de reservas internas (banco/local)
+        # Diálogos de CRUD de reservas internas
         self.add_dialog(EditarReservasDialogo(self.user_state))
         self.add_dialog(ConsultarReservaDialogo(self.user_state))
         self.add_dialog(novasReservasDialogo(self.user_state))
@@ -35,22 +35,21 @@ class MainDialog(ComponentDialog):
     
     async def prompt_option_step(self, step_context: WaterfallStepContext):
         """
-        Menu principal do bot para gerenciar as reservas SALVAS no sistema.
-        A parte de entendimento de linguagem + Amadeus já acontece antes,
-        aqui o usuário só gerencia o que ficou registrado.
+        Menu principal para gerenciar as reservas SALVAS no sistema interno.
+        As opções já usam frases parecidas com as que o usuário falaria.
         """
         return await step_context.prompt(
             ChoicePrompt.__name__,
             PromptOptions(
                 prompt=MessageFactory.text(
                     "Agora vamos falar das suas reservas salvas no sistema.\n\n"
-                    "O que você quer fazer?"
+                    "Escolha uma opção:"
                 ),
                 choices=[
-                    Choice("Novas Reservas"),
-                    Choice("Consultar Reservas"),
-                    Choice("Editar Reservas"),
-                    Choice("Deletar Reservas"),
+                    Choice("Reservar viagem"),      # antes: Novas Reservas
+                    Choice("Consultar reserva"),    # antes: Consultar Reservas
+                    Choice("Editar reserva"),       # antes: Editar Reservas
+                    Choice("Cancelar reserva"),     # antes: Deletar Reservas
                     Choice("Ajuda"),
                 ],
             ),
@@ -59,24 +58,23 @@ class MainDialog(ComponentDialog):
     async def process_option_step(self, step_context: WaterfallStepContext):
         option = step_context.result.value
         
-        if option == "Novas Reservas":
+        if option == "Reservar viagem":
             return await step_context.begin_dialog(novasReservasDialogo.__name__)
             
-        elif option == "Consultar Reservas":
+        elif option == "Consultar reserva":
             return await step_context.begin_dialog(ConsultarReservaDialogo.__name__)
             
-        elif option == "Editar Reservas":
+        elif option == "Editar reserva":
             return await step_context.begin_dialog(EditarReservasDialogo.__name__)
         
-        elif option == "Deletar Reservas":
+        elif option == "Cancelar reserva":
             return await step_context.begin_dialog(DeletarReservaDialogo.__name__)
             
         elif option == "Ajuda":
             await step_context.context.send_activity(
                 MessageFactory.text(
-                    "Você pode usar este menu para registrar, consultar, editar ou deletar "
-                    "reservas do sistema interno (tanto de hotel quanto de voo, se você quiser "
-                    "guardar essas informações aqui)."
+                    "Você pode usar este menu para registrar, consultar, editar ou cancelar "
+                    "reservas que já estão salvas no sistema interno."
                 )
             )
             return await step_context.replace_dialog(self.id)
