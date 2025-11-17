@@ -1,14 +1,13 @@
-
 from botbuilder.core import MessageFactory, UserState
 from botbuilder.dialogs import ComponentDialog, WaterfallDialog, WaterfallStepContext
 from botbuilder.dialogs.prompts import ChoicePrompt, PromptOptions
 from botbuilder.dialogs.choices import Choice
 
-
 from .consultar_reserva import ConsultarReservaDialogo
 from .novas_Reservas import novasReservasDialogo
 from .editar_Reservas import EditarReservasDialogo
 from .deletar_reserva_dialogo import DeletarReservaDialogo
+
 
 class MainDialog(ComponentDialog):
     def __init__(self, user_state: UserState):
@@ -16,12 +15,12 @@ class MainDialog(ComponentDialog):
         
         self.user_state = user_state
         self.add_dialog(ChoicePrompt(ChoicePrompt.__name__))
-        
-        # Registrando todos os diálogos com os nomes padronizados
+
+        # Diálogos de CRUD de reservas internas (banco/local)
         self.add_dialog(EditarReservasDialogo(self.user_state))
         self.add_dialog(ConsultarReservaDialogo(self.user_state))
         self.add_dialog(novasReservasDialogo(self.user_state))
-        self.add_dialog(DeletarReservaDialogo(self.user_state)) # <-- Novo diálogo adicionado
+        self.add_dialog(DeletarReservaDialogo(self.user_state))
         
         self.add_dialog(
             WaterfallDialog(
@@ -35,41 +34,52 @@ class MainDialog(ComponentDialog):
         self.initial_dialog_id = "MainWaterfall"
     
     async def prompt_option_step(self, step_context: WaterfallStepContext):
-        # 3. Adicionada a opção "Deletar Reservas" no menu
+        """
+        Menu principal do bot para gerenciar as reservas SALVAS no sistema.
+        A parte de entendimento de linguagem + Amadeus já acontece antes,
+        aqui o usuário só gerencia o que ficou registrado.
+        """
         return await step_context.prompt(
             ChoicePrompt.__name__,
             PromptOptions(
-                prompt=MessageFactory.text("Seja bem-vindo(a) ao bot de reservas! Escolha a opção desejada:"),
+                prompt=MessageFactory.text(
+                    "Agora vamos falar das suas reservas salvas no sistema.\n\n"
+                    "O que você quer fazer?"
+                ),
                 choices=[
                     Choice("Novas Reservas"),
                     Choice("Consultar Reservas"),
                     Choice("Editar Reservas"),
-                    Choice("Deletar Reservas"), # <-- Nova opção
-                    Choice("Ajuda")
-                ]
-            )
+                    Choice("Deletar Reservas"),
+                    Choice("Ajuda"),
+                ],
+            ),
         )
 
     async def process_option_step(self, step_context: WaterfallStepContext):
         option = step_context.result.value
         
-        # Lógica atualizada para chamar os diálogos pelos seus nomes de classe
-        if (option == "Novas Reservas"):
+        if option == "Novas Reservas":
             return await step_context.begin_dialog(novasReservasDialogo.__name__)
             
-        elif (option == "Consultar Reservas"):
+        elif option == "Consultar Reservas":
             return await step_context.begin_dialog(ConsultarReservaDialogo.__name__)
             
-        elif (option == "Editar Reservas"):
+        elif option == "Editar Reservas":
             return await step_context.begin_dialog(EditarReservasDialogo.__name__)
         
-        elif (option == "Deletar Reservas"): # <-- Nova lógica
+        elif option == "Deletar Reservas":
             return await step_context.begin_dialog(DeletarReservaDialogo.__name__)
             
-        elif (option == "Ajuda"):
-            await step_context.context.send_activity(MessageFactory.text("Você escolheu a opção Ajuda. Em que posso ser útil?"))
-            # Reinicia o diálogo principal para mostrar o menu novamente
+        elif option == "Ajuda":
+            await step_context.context.send_activity(
+                MessageFactory.text(
+                    "Você pode usar este menu para registrar, consultar, editar ou deletar "
+                    "reservas do sistema interno (tanto de hotel quanto de voo, se você quiser "
+                    "guardar essas informações aqui)."
+                )
+            )
             return await step_context.replace_dialog(self.id)
 
-        # Se a opção não for reconhecida, apenas reinicia o diálogo.
+        # Qualquer coisa fora das opções, reabre o menu
         return await step_context.replace_dialog(self.id)

@@ -3,24 +3,50 @@ from botbuilder.schema import ChannelAccount
 from botbuilder.dialogs import Dialog
 from helpers.DialogHelper import DialogHelper
 
-import requests  # para chamar o serviço do Azure Language
+import requests
+
+from helpers.amadeus_helper import consultar_voos_demo, consultar_hoteis_demo
 
 
 # ============ CONFIGURAÇÃO DO AZURE LANGUAGE (CLU) ============
 
 AZURE_LANGUAGE_ENDPOINT = "https://luisluis.cognitiveservices.azure.com/"
-AZURE_LANGUAGE_KEY = "D3ufTnxYkBXC3jIspcSyrCiv5ciXIjWiqAg7nLlfQR98tlSSEucoJQQJ99BKACBsN54XJ3w3AAAaACOGRUig"  
-AZURE_PROJECT_NAME = "ReservaHotel"      # nome do projeto no Language Studio
-AZURE_DEPLOYMENT_NAME = "production"     # nome do deployment publicado
+AZURE_LANGUAGE_KEY = "D3ufTnxYkBXC3jIspcSyrCiv5ciXIjWiqAg7nLlfQR98tlSSEucoJQQJ99BKACBsN54XJ3w3AAAaACOGRUig"
+AZURE_PROJECT_NAME = "ReservaHotel"
+AZURE_DEPLOYMENT_NAME = "production"
 
 
-def pegar_intent_do_azure(texto: str) -> str:
+# Intents “oficiais” pro trabalho
+INTENTS_VOO = {"ComprarVoo", "ConsultarVoo", "CancelarVoo"}
+INTENTS_HOTEL = {"ReservarHotel", "ConsultarHotel", "CancelarHotel"}
+
+# Mapa: nomes que vêm do Azure → nomes padronizados pro trabalho
+INTENT_ALIAS_MAP = {
+    # VOOS
+    "ComprarPassagem": "ComprarVoo",
+    "AlterarPassagem": "ConsultarVoo",
+    "CacelarPassagem": "CancelarVoo",
+    "CancelarPassagem": "CancelarVoo",
+
+    # HOTÉIS
+    "ReservarHotel": "ReservarHotel",
+    "AlterarHotel": "ConsultarHotel",
+    "CancelarHotel": "CancelarHotel",
+
+    # Caso um dia existam direto
+    "ConsultarVoo": "ConsultarVoo",
+    "ConsultarHotel": "ConsultarHotel",
+}
+
+
+def pegar_intent_e_tokens_do_azure(texto: str):
     """
-    Envia o texto do usuário para o Azure Language (Conversational Language Understanding)
-    e devolve o nome da intent (ex: ComprarPassagem, CancelarHotel, ReservarHotel).
+    Chama o Azure CLU e devolve:
+      - intent bruta
+      - lista de entidades (tokens) simples
     """
     if not texto:
-        return "None"
+        return "None", []
 
     url = f"{AZURE_LANGUAGE_ENDPOINT}/language/:analyze-conversations?api-version=2023-04-01"
 
@@ -49,13 +75,79 @@ def pegar_intent_do_azure(texto: str) -> str:
         resp = requests.post(url, headers=headers, json=body)
         resp.raise_for_status()
         data = resp.json()
+
         prediction = data["result"]["prediction"]
         top_intent = prediction.get("topIntent", "None")
-        return top_intent
+        entities = prediction.get("entities", [])
+
+        print("DEBUG CLU prediction:", prediction)
+
+        tokens = []
+        for e in entities:
+            tokens.append(
+                {
+                    "category": e.get("category"),
+                    "text": e.get("text"),
+                    "confidence": e.get("confidenceScore"),
+                }
+            )
+
+        return top_intent, tokens
+
     except Exception as e:
-        # Se der erro, loga no console e devolve "None" para não quebrar o bot
         print("Erro chamando Azure Language:", e)
-        return "None"
+        return "None", []
+
+
+def _resumir_tokens(tokens):
+    """
+    Pega as entidades do CLU e monta um resuminho amigável:
+    cidade, data, número de pessoas, etc.
+    """
+    info = {}
+    for t in tokens:
+        cat = (t.get("category") or "").lower()
+        txt = (t.get("text") or "").strip()
+        if not txt:
+            continue
+        info[cat] = txt
+
+    # procura por campos relevantes de forma “fuzzy”
+    cidade = next((v for k, v in info.items() if "cidade" in k), None)
+    data = next((v for k, v in info.items() if "data" in k), None)
+    pessoas = next((v for k, v in info.items() if "pessoa" in k or "numero" in k), None)
+
+    partes = []
+    if cidade:
+        partes.append(f"em {cidade}")
+    if data:
+        partes.append(f"na data {data}")
+    if pessoas:
+        partes.append(f"para {pessoas} pessoa(s)")
+
+    if not partes:
+        return ""
+
+    return " " + ", ".join(partes)
+
+
+def _descricao_acao(intent: str) -> str:
+    """
+    Traduz a intent "oficial" em uma frase amigável.
+    """
+    if intent == "ReservarHotel":
+        return "reservar um hotel"
+    if intent == "ConsultarHotel":
+        return "consultar opções de hotel"
+    if intent == "CancelarHotel":
+        return "cancelar uma reserva de hotel"
+    if intent == "ComprarVoo":
+        return "comprar uma passagem de avião"
+    if intent == "ConsultarVoo":
+        return "consultar opções de voo"
+    if intent == "CancelarVoo":
+        return "cancelar uma passagem"
+    return "te ajudar com sua viagem"
 
 
 class MainBot(ActivityHandler):
@@ -73,24 +165,71 @@ class MainBot(ActivityHandler):
     async def on_turn(self, turn_context: TurnContext):
         await super().on_turn(turn_context)
 
-        # Salvar alterações de estado da conversa e do usuário
         await self.conversation_state.save_changes(turn_context)
         await self.user_state.save_changes(turn_context)
 
     async def on_message_activity(self, turn_context: TurnContext):
-        # Texto digitado pelo usuário
         texto_usuario = turn_context.activity.text or ""
 
-        # 1) Descobre a intent no Azure
-        intent = pegar_intent_do_azure(texto_usuario)
+        # 1) CLU: intent + tokens
+        intent_bruta, tokens = pegar_intent_e_tokens_do_azure(texto_usuario)
+        intent = INTENT_ALIAS_MAP.get(intent_bruta, intent_bruta)
 
-        # 2) Responde para o usuário qual intent foi entendida
-        #    (isso já prova a integração com o Language Understanding)
-        await turn_context.send_activity(
-            MessageFactory.text(f"Entendi que você quer: {intent}")
-        )
+        print(f"DEBUG intent_bruta={intent_bruta} intent_mapeada={intent}")
 
-        # 3) Continua o fluxo normal do bot (diálogos/menus do professor)
+        # 2) Monta frase amigável pro usuário
+        resumo_tokens = _resumir_tokens(tokens)
+        acao = _descricao_acao(intent)
+
+        if intent in INTENTS_VOO or intent in INTENTS_HOTEL:
+            msg_inicial = f"Beleza! Entendi que você quer {acao}{resumo_tokens}."
+            await turn_context.send_activity(MessageFactory.text(msg_inicial))
+
+        # 3) Integração com Amadeus + simulação de reserva
+
+        if intent in INTENTS_VOO:
+            await turn_context.send_activity(
+                MessageFactory.text("Vou dar uma olhada nos voos disponíveis pra você 🚀...")
+            )
+            resultado_voos = consultar_voos_demo()
+            await turn_context.send_activity(
+                MessageFactory.text("Encontrei essas opções de voo:")
+            )
+            await turn_context.send_activity(MessageFactory.text(resultado_voos))
+            await turn_context.send_activity(
+                MessageFactory.text(
+                    "Considere que escolhi a opção que melhor se encaixa pra você e "
+                    "simulei a emissão da sua passagem. 😉\n"
+                    "Se quiser registrar essa reserva no sistema interno, use o menu de *Novas Reservas* a seguir."
+                )
+            )
+
+        elif intent in INTENTS_HOTEL:
+            await turn_context.send_activity(
+                MessageFactory.text("Vou buscar alguns hotéis legais pra você 🏨...")
+            )
+            resultado_hoteis = consultar_hoteis_demo()
+            await turn_context.send_activity(
+                MessageFactory.text("Olha algumas opções de hotel que encontrei:")
+            )
+            await turn_context.send_activity(MessageFactory.text(resultado_hoteis))
+            await turn_context.send_activity(
+                MessageFactory.text(
+                    "Podemos considerar que a melhor opção acima foi reservada pra você, "
+                    "com base nas informações que você informou. 💜\n"
+                    "Se quiser armazenar essa reserva no sistema interno, é só usar o menu de *Novas Reservas*."
+                )
+            )
+
+        else:
+            # Não bateu em voo/hotel → cai pro fluxo normal dos diálogos
+            await turn_context.send_activity(
+                MessageFactory.text(
+                    "Não entendi exatamente se é voo ou hotel, então vou te mostrar o menu de reservas 🙂"
+                )
+            )
+
+        # 4) Continua fluxo normal (menus/dialogs)
         await DialogHelper.run_dialog(
             self.dialog,
             turn_context,
@@ -106,11 +245,16 @@ class MainBot(ActivityHandler):
             if member_added.id != turn_context.activity.recipient.id:
                 await turn_context.send_activity(
                     MessageFactory.text(
-                        "Seja bem-vindo(a) ao bot de Reserva de Hotéis!"
+                        "Seja bem-vindo(a) ao bot de Reservas de Viagem! 🌎"
                     )
                 )
                 await turn_context.send_activity(
                     MessageFactory.text(
-                        "Digite uma mensagem (ex: 'quero reservar hotel') para iniciar o atendimento."
+                        "Você pode falar coisas como:\n"
+                        "- 'Quero comprar passagem de avião de São Paulo para o Rio'\n"
+                        "- 'Quero consultar voo pra SP semana que vem'\n"
+                        "- 'Quero reservar hotel no Rio amanhã para 2 pessoas'\n"
+                        "- 'Quero cancelar meu hotel'\n"
+                        "Ou simplesmente digitar qualquer coisa pra abrir o menu de opções."
                     )
                 )
