@@ -24,7 +24,7 @@ class DefaultConfig:
     )
     COSMOS_KEY = os.environ.get(
         "COSMOS_KEY",
-        "daHWXnyAkkz2t8xfICeJQ9fx6hmYoDSOtmDuZANhoWf34EzrRGKnriBg8UZyWzmxJimlMeYHBRJxACDbjD6oPg==",
+        "Chave ilustrativa pq o github n deixa colocar chave real aqui==",
     )
     COSMOS_DATABASE = os.environ.get("COSMOS_DATABASE", "reservas-db")
     COSMOS_CONTAINER = os.environ.get("COSMOS_CONTAINER", "reservas")
